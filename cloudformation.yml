@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Resources:
+  ##VPC作成
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: "10.0.0.0/16"
+#      EnableDnsSupport: true
+      EnableDnsHostnames: true  #DNS設定を有効化:インスタンスにDNS名が設定され、名前解決可能になる
+#      InstanceTenancy: "default"
+      Tags:
+        - Key: "Name"
+          Value: "CfVpc"
+          
+  ##ここからパブリックサブネット作成
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      CidrBlock: "10.0.1.0/24"
+      MapPublicIpOnLaunch: false  #パブリックIPv4アドレスの自動割り当て：無効
+      Tags:
+        - Key: "Name"
+          Value: "CfPrivateSubnet"
+      VpcId: !Ref VPC
+      
+  ##ここからInternetGatewayを定義、VPCにアタッチ
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway #Gateway定義
+    Properties:
+      Tags:
+      - Key: "Name"
+        Value: "CfInternetGateway"
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment  #GatewayをVPCにアタッチ
+    Properties:
+      InternetGatewayId: !Ref InternetGateway #どのGatewayか
+      VpcId: !Ref VPC                         #どのVPCにアタッチするか
+      
+  ##ここからパブリックサブネット用のルートテーブル作成、ルートテーブルをパブリックサブネットに関連付け
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable  #ルートテーブル定義
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: "CfRouteTableForPublicSubnet"
+  AddInternetGatewayToPublicRouteTable:
+    Type: AWS::EC2::Route
+#    DependsOn: AttachGateway
+    Properties:
+      DestinationCidrBlock: 0.0.0.0/0 #Destination（送信先）はフルオープン
+      GatewayId: !Ref InternetGateway #ターゲット
+      RouteTableId: !Ref PublicRouteTable
+  AttachPublicRouteTableToPublicSubnet:
+    Type: "AWS::EC2::SubnetRouteTableAssociation"   #テーブルをサブネットに関連づけ
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      SubnetId: !Ref PublicSubnet
+      
+  
+  #Web用のセキュリティグループ
+  SecurityGroupForWebServer:
+    Type: "AWS::EC2::SecurityGroup" #セキュリティグループ定義
+    Properties:
+      GroupName: "CfSecurityGroupForPublicServer" 
+      GroupDescription: "CfsecurityGroupForPublicserver"
+      SecurityGroupIngress:
+          #22番ポート(SSH)
+        - CidrIp: 0.0.0.0/0 #ソースはすべてのホスト
+          Description: "SSH"
+          FromPort: 22
+          IpProtocol: "tcp"
+          ToPort: 22
+          #80番ポートも追加(Apache HTTP)
+          CidrIp: 0.0.0.0/0
+          Description: "HTTP"
+          FromPort: 80
+          IpProtocol: "tcp"
+          ToPort: 80
+      VpcId: !Ref VPC
+      
+  #Web用のEC2（インスタンス=仮想サーバ）を作成
+  EC2ForWebServer:
+    Type: AWS::EC2::Instance
+    
+#   Apacheをインストール
+#    Metadata:
+#      Comment1: Install and bootstrap httpd
+#      AWS::CloudFormation::Init:
+#        configSets:
+#          Install:
+#            - Install
+#        Install:
+#          packages:
+#            yum:
+#              httpd: []
+#          services:
+#            sysvinit:
+#              httpd:
+#                enable: true
+#                ensureRunning: true
+    
+    Properties:
+      ImageId: "ami-a77c30c1" #AMI選択
+      KeyName: "cf-my-key"  #SSHキーペア
+      InstanceType: "t2.micro"  
+      NetworkInterfaces:
+        - AssociatePublicIpAddress: true  #自動割り当てパブリックIPを有効化
+          DeviceIndex: 0
+          DeleteOnTermination: true
+          PrivateIpAddress: 10.0.1.10
+          SubnetId: !Ref PublicSubnet
+          GroupSet:
+            - !Ref SecurityGroupForWebServer
+
+      Tags:
+        - Key: Name
+          Value: "CfPublicServer"
+  
